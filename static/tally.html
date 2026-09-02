@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SP1 Traffic Tally</title>
+<style>
+  :root{
+    --bg:#14161a; --panel:#1c2027; --line:#2c323c; --ink:#e8ecf2;
+    --dim:#8b95a5; --accent:#4a9eff; --ok:#3ecf8e; --warn:#ffb020; --bad:#ff6b6b;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:15px/1.5 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+       padding:18px 22px 60px}
+  h1{font-size:19px;margin:0 0 2px}
+  .sub{color:var(--dim);font-size:13px;margin-bottom:14px}
+
+  .bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;
+       background:var(--panel);border:1px solid var(--line);
+       border-radius:10px;padding:11px 13px;margin-bottom:12px}
+  input,select{background:#12151a;border:1px solid var(--line);color:var(--ink);
+       border-radius:7px;padding:7px 9px;font-size:14px;font-family:inherit}
+  input[type=number]{width:74px}
+  label.f{color:var(--dim);font-size:12.5px;display:flex;align-items:center;gap:6px}
+  button{background:#2a3140;border:1px solid var(--line);color:var(--ink);
+       border-radius:7px;padding:7px 13px;font-size:14px;cursor:pointer;font-family:inherit}
+  button:hover{background:#333c4d}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#04111f;font-weight:600}
+  button.danger{background:#3a2226;border-color:#5a2f36;color:#ffb3b3}
+
+  .clock{font-variant-numeric:tabular-nums;font-size:27px;font-weight:600;min-width:105px}
+  .clock.run{color:var(--ok)}
+  .binlbl{color:var(--dim);font-size:12px}
+
+  table{width:100%;border-collapse:collapse;background:var(--panel);
+        border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  th,td{padding:8px 11px;text-align:left;border-bottom:1px solid var(--line)}
+  th{background:#191d24;font-size:11px;text-transform:uppercase;
+     letter-spacing:.7px;color:var(--dim);font-weight:600}
+  tr:last-child td{border-bottom:none}
+  td.mv{font-weight:600;white-space:nowrap}
+  td.mv small{display:block;font-weight:400;color:var(--dim);font-size:11.5px}
+  .free{color:var(--dim);font-size:10.5px;border:1px solid var(--line);
+        border-radius:4px;padding:1px 5px;margin-left:5px;vertical-align:middle}
+
+  .cell{display:flex;align-items:center;gap:7px}
+  .hit{min-width:46px;padding:8px 0;font-size:15px;font-weight:600}
+  .hit:active{transform:scale(.94)}
+  .kbd{font:11px ui-monospace,Menlo,monospace;color:var(--dim);
+       border:1px solid var(--line);border-radius:4px;padding:1px 5px}
+  .n{font-variant-numeric:tabular-nums;font-size:17px;font-weight:600;min-width:32px}
+  .n.zero{color:#4a525f}
+  .tot{font-variant-numeric:tabular-nums;color:var(--dim)}
+  input.lanes{width:52px;text-align:center}
+
+  .flash{animation:fl .35s ease-out}
+  @keyframes fl{0%{background:#2b4d72}100%{background:transparent}}
+
+  h2{font-size:12.5px;text-transform:uppercase;letter-spacing:.8px;
+     color:var(--dim);margin:22px 0 9px}
+  pre{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+      padding:13px;overflow:auto;font:12.5px/1.55 ui-monospace,Menlo,monospace;
+      color:#cfd8e3;max-height:300px}
+  .hint{color:var(--dim);font-size:12.5px;margin-top:7px}
+  .note{background:#182430;border:1px solid #274056;color:#a9cdf0;
+        border-radius:8px;padding:9px 12px;font-size:13px;margin-bottom:12px}
+  .note b{color:#d7e9fb}
+</style>
+</head>
+<body>
+
+<h1>SP1 Traffic Tally</h1>
+<div class="sub">Per-lane, 15-minute-bin vehicle counts — ABAC T-intersection</div>
+
+<div class="note">
+  <b>15-minute bins (HCM standard).</b> The timer auto-saves each bin and keeps going —
+  don't stop between bins. Raw bins let Badin pick the peak from data and compute a
+  Peak Hour Factor, instead of assuming where the peak is.
+  <br><b>Motorcycles are counted separately</b> because the simulator models cars only —
+  motorcycles filter to the front and barely occupy queue space.
+  <br><b>Set the lane count</b> per movement. Bangna-Trad is multi-lane; the model has one
+  lane per direction, so totals without a lane count look oversaturated by construction.
+</div>
+
+<div class="bar">
+  <input id="session" placeholder="Session (e.g. A_morning_1)" style="width:190px">
+  <label class="f">Video start
+    <input id="vstart" value="0:00" style="width:64px">
+  </label>
+  <label class="f">Bin
+    <input type="number" id="dur" value="900" min="60" step="60"> s
+  </label>
+  <div class="clock" id="clock">0:00</div>
+  <span class="binlbl" id="binlbl">bin 1</span>
+  <button class="primary" id="startBtn">Start</button>
+  <button id="binBtn">End bin early</button>
+  <button id="undoBtn">Undo <span class="kbd">⌫</span></button>
+  <button class="danger" id="resetBtn">Reset all</button>
+</div>
+
+<table>
+  <thead>
+    <tr>
+      <th style="width:26%">Movement</th>
+      <th style="width:70px">Lanes</th>
+      <th>Car</th>
+      <th>Motorcycle</th>
+      <th>Heavy (bus/6-wheel+)</th>
+      <th style="width:70px">Total</th>
+    </tr>
+  </thead>
+  <tbody id="rows"></tbody>
+</table>
+
+<div class="hint">
+  Keys — <span class="kbd">1</span>–<span class="kbd">8</span> car ·
+  <span class="kbd">Q</span>–<span class="kbd">I</span> motorcycle ·
+  <span class="kbd">A</span>–<span class="kbd">K</span> heavy, in row order.
+  Timer starts on your first count. Count a vehicle when it <em>crosses the stop line</em> —
+  parked taxis never cross, so they never count.
+  <br><strong>For straight-through vehicles, note which lane they used</strong> —
+  inner lane → A1 / B1, outer shared lane → A2 / B2. Total straight = A1 + A2.
+  The shared-lane share is what decides how often turning traffic gets blocked.
+</div>
+
+<h2>Completed bins</h2>
+<pre id="bins">No bins recorded yet.</pre>
+
+<h2>Current bin</h2>
+<pre id="out">—</pre>
+<button id="csvBtn">Copy CSV (all bins)</button>
+<button id="jsonBtn">Copy JSON</button>
+<button id="sumBtn">Copy summary</button>
+
+<script>
+// Through movements are split by WHICH LANE the vehicle used.
+//
+// Each approach has 2 lanes: an inner lane (through only) and an outer lane
+// shared between through and turning traffic. That split is what decides how
+// often turning vehicles get blocked, so it has to be counted, not assumed.
+//
+//   A1 — inner lane, straight     (never blocks Ax)
+//   A2 — SHARED lane, straight    (stops at red, blocks Ax behind it)
+//   Ax — SHARED lane, left turn   (free flow, but trapped behind A2)
+//
+// Same structure on approach B, except the blocking runs the other way: Bx is
+// signalised, so when a phase runs A+B green (Bx red), a queued Bx vehicle in
+// the shared lane blocks B2 through traffic.
+const MOVES = [
+  {id:'A1', desc:'Eastbound straight — INNER lane',        free:false, lanes:1, keys:['1','q','a']},
+  {id:'A2', desc:'Eastbound straight — SHARED lane',       free:false, lanes:1, keys:['2','w','s']},
+  {id:'Ax', desc:'Eastbound left turn INTO ABAC — shared', free:true,  lanes:1, keys:['3','e','d']},
+  {id:'B1', desc:'Westbound straight — INNER lane',        free:false, lanes:1, keys:['4','r','f']},
+  {id:'B2', desc:'Westbound straight — SHARED lane',       free:false, lanes:1, keys:['5','t','g']},
+  {id:'Bx', desc:'Westbound right turn INTO ABAC — shared',free:false, lanes:1, keys:['6','y','h']},
+  {id:'CB', desc:'Out of ABAC, right turn (west)',         free:false, lanes:1, keys:['7','u','j']},
+  {id:'CA', desc:'Out of ABAC, left turn (east)',          free:true,  lanes:1, keys:['8','i','k']},
+];
+const TYPES = ['car','moto','heavy'];
+
+let counts = {}, log = [], bins = [];
+let t0 = null, running = false, elapsed = 0, binIndex = 1, binBase = 0;
+const fresh = () => Object.fromEntries(MOVES.map(m => [m.id, {car:0,moto:0,heavy:0}]));
+counts = fresh();
+
+const $ = id => document.getElementById(id);
+const lanesOf = id => Math.max(1, +($(`lanes-${id}`)?.value || 1));
+
+function buildRows(){
+  $('rows').innerHTML = MOVES.map(m => `
+    <tr id="row-${m.id}">
+      <td class="mv">${m.id}${m.free?'<span class="free">free flow</span>':''}
+        <small>${m.desc}</small></td>
+      <td><input class="lanes" type="number" min="1" max="6"
+                 id="lanes-${m.id}" value="${m.lanes}"></td>
+      ${TYPES.map((t,i)=>`
+        <td><div class="cell">
+          <button class="hit" data-mv="${m.id}" data-ty="${t}">+</button>
+          <span class="kbd">${m.keys[i].toUpperCase()}</span>
+          <span class="n zero" id="n-${m.id}-${t}">0</span>
+        </div></td>`).join('')}
+      <td class="tot" id="tot-${m.id}">0</td>
+    </tr>`).join('');
+  document.querySelectorAll('.hit').forEach(b =>
+    b.onclick = () => bump(b.dataset.mv, b.dataset.ty));
+  document.querySelectorAll('.lanes').forEach(el => el.onchange = render);
+}
+
+function bump(mv, ty){
+  if (!running) start();
+  counts[mv][ty]++;
+  log.push({bin:binIndex, mv, ty, t:+now().toFixed(1)});
+  render(mv);
+}
+function undo(){
+  const last = log.pop();
+  if (!last || last.bin !== binIndex) { if(last) log.push(last); return; }
+  counts[last.mv][last.ty]--;
+  render(last.mv);
+}
+
+function render(flashMv){
+  MOVES.forEach(m => {
+    let tot = 0;
+    TYPES.forEach(t => {
+      const v = counts[m.id][t]; tot += v;
+      const el = $(`n-${m.id}-${t}`);
+      el.textContent = v; el.className = 'n' + (v===0?' zero':'');
+    });
+    $(`tot-${m.id}`).textContent = tot;
+  });
+  if (flashMv){
+    const r = $(`row-${flashMv}`);
+    r.classList.remove('flash'); void r.offsetWidth; r.classList.add('flash');
+  }
+  result();
+}
+
+// Accumulated time, valid whether running or paused.
+function now(){ return elapsed + (running && t0 !== null ? (Date.now()-t0)/1000 : 0); }
+const binElapsed = () => now() - binBase;
+
+function start(){
+  if (running){ pause(); return; }
+  t0 = Date.now(); running = true;
+  $('startBtn').textContent = 'Pause';
+  tick();
+}
+function pause(){
+  elapsed = now(); running = false; t0 = null;
+  $('startBtn').textContent = 'Resume';
+  $('clock').className = 'clock';
+}
+function tick(){
+  if (!running) return;
+  const s = binElapsed(), d = +$('dur').value;
+  $('clock').textContent = Math.floor(s/60)+':'+String(Math.floor(s%60)).padStart(2,'0');
+  $('clock').className = 'clock run';
+  if (s >= d) closeBin();
+  requestAnimationFrame(tick);
+}
+
+function closeBin(){
+  const d = binElapsed();
+  if (d < 1) return;
+  bins.push({
+    bin: binIndex,
+    start: +binBase.toFixed(1),
+    end: +(binBase+d).toFixed(1),
+    dur: +d.toFixed(1),
+    lanes: Object.fromEntries(MOVES.map(m => [m.id, lanesOf(m.id)])),
+    counts: JSON.parse(JSON.stringify(counts)),
+  });
+  binBase += d;
+  binIndex++;
+  counts = fresh();
+  $('binlbl').textContent = 'bin ' + binIndex;
+  render();
+  showBins();
+}
+
+function reset(){
+  if ((log.length || bins.length) && !confirm('Clear everything?')) return;
+  counts = fresh(); log = []; bins = [];
+  elapsed = 0; t0 = null; running = false; binIndex = 1; binBase = 0;
+  $('startBtn').textContent = 'Start';
+  $('clock').textContent = '0:00'; $('clock').className = 'clock';
+  $('binlbl').textContent = 'bin 1';
+  render(); showBins();
+}
+
+// Convert "m:ss" or seconds to seconds
+function vstartSec(){
+  const raw = ($('vstart').value || '0').trim();
+  if (raw.includes(':')){
+    const [m,s] = raw.split(':').map(Number);
+    return (m||0)*60 + (s||0);
+  }
+  return +raw || 0;
+}
+
+function showBins(){
+  if (!bins.length){ $('bins').textContent = 'No bins recorded yet.'; return; }
+  const off = vstartSec();
+  const L = ['bin  video_from  video_to   mv   lanes  car  moto  heavy  total  interval  per_lane_veh_hr'];
+  L.push('-'.repeat(94));
+  bins.forEach(b => MOVES.forEach(m => {
+    const c = b.counts[m.id], tot = c.car+c.moto+c.heavy;
+    if (!tot) return;
+    const lanes = b.lanes[m.id];
+    const mi = b.dur/tot;
+    const perLane = (tot/b.dur)*3600/lanes;
+    L.push(
+      String(b.bin).padEnd(5) +
+      fmt(off+b.start).padEnd(11) + fmt(off+b.end).padEnd(11) +
+      m.id.padEnd(5) + String(lanes).padStart(4) +
+      String(c.car).padStart(6) + String(c.moto).padStart(6) +
+      String(c.heavy).padStart(7) + String(tot).padStart(7) +
+      (mi.toFixed(1)+'s').padStart(10) + perLane.toFixed(0).padStart(16));
+  }));
+  $('bins').textContent = L.join('\n');
+}
+const fmt = s => Math.floor(s/60)+':'+String(Math.round(s%60)).padStart(2,'0');
+
+function result(){
+  const d = Math.max(binElapsed(), 0.001);
+  const L = [`bin ${binIndex} — ${d.toFixed(0)}s elapsed`, '',
+             'mv    lanes  car  moto  heavy  total  interval   cars+heavy'];
+  L.push('-'.repeat(62));
+  MOVES.forEach(m => {
+    const c = counts[m.id], tot = c.car+c.moto+c.heavy;
+    const ch = c.car + c.heavy;
+    L.push(m.id.padEnd(6) + String(lanesOf(m.id)).padStart(4) +
+      String(c.car).padStart(6) + String(c.moto).padStart(6) +
+      String(c.heavy).padStart(7) + String(tot).padStart(7) +
+      (tot? (d/tot).toFixed(1)+'s' : '—').padStart(10) +
+      (ch? (d/ch).toFixed(1)+'s' : '—').padStart(13));
+  });
+  L.push('', 'cars+heavy is the model-relevant rate — the simulator has no motorcycles.');
+  $('out').textContent = L.join('\n');
+}
+
+function csv(){
+  const off = vstartSec(), s = $('session').value || 'session';
+  const rows = ['session,bin,video_from_s,video_to_s,bin_dur_s,movement,lanes,car,moto,heavy,total,mean_interval_s,cars_heavy_interval_s,per_lane_veh_hr'];
+  bins.forEach(b => MOVES.forEach(m => {
+    const c = b.counts[m.id], tot = c.car+c.moto+c.heavy;
+    if (!tot) return;
+    const lanes = b.lanes[m.id], ch = c.car+c.heavy;
+    rows.push([s, b.bin, (off+b.start).toFixed(0), (off+b.end).toFixed(0),
+      b.dur.toFixed(0), m.id, lanes, c.car, c.moto, c.heavy, tot,
+      (b.dur/tot).toFixed(2), ch?(b.dur/ch).toFixed(2):'',
+      ((tot/b.dur)*3600/lanes).toFixed(0)].join(','));
+  }));
+  return rows.join('\n');
+}
+
+function summary(){
+  const s = $('session').value || 'session';
+  const agg = {};
+  let total = 0;
+  MOVES.forEach(m => agg[m.id] = {car:0,moto:0,heavy:0,dur:0,lanes:lanesOf(m.id)});
+  bins.forEach(b => MOVES.forEach(m => {
+    const c = b.counts[m.id];
+    agg[m.id].car+=c.car; agg[m.id].moto+=c.moto; agg[m.id].heavy+=c.heavy;
+    agg[m.id].dur += b.dur; agg[m.id].lanes = b.lanes[m.id];
+  }));
+  const L = [`Session: ${s}`, `Bins: ${bins.length} × ${bins.length?bins[0].dur.toFixed(0):0}s`, '',
+             'mv    lanes  car  moto  heavy  total   all_veh   cars+heavy   moto%'];
+  L.push('-'.repeat(72));
+  MOVES.forEach(m => {
+    const a = agg[m.id], tot = a.car+a.moto+a.heavy;
+    if (!tot) return;
+    total += tot;
+    const ch = a.car+a.heavy;
+    L.push(m.id.padEnd(6)+String(a.lanes).padStart(4)+
+      String(a.car).padStart(6)+String(a.moto).padStart(6)+
+      String(a.heavy).padStart(7)+String(tot).padStart(7)+
+      ((a.dur/tot).toFixed(1)+'s').padStart(10)+
+      (ch?(a.dur/ch).toFixed(1)+'s':'—').padStart(13)+
+      (100*a.moto/tot).toFixed(0).padStart(7)+'%');
+  });
+  L.push('', 'meanInterval for TestCaseLibrary.cs — use cars+heavy (model has no motorcycles).');
+  return L.join('\n');
+}
+
+document.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT') return;
+  if (e.key === 'Backspace'){ e.preventDefault(); undo(); return; }
+  const k = e.key.toLowerCase();
+  for (const m of MOVES){
+    const i = m.keys.indexOf(k);
+    if (i > -1){ e.preventDefault(); bump(m.id, TYPES[i]); return; }
+  }
+});
+
+const copy = (btn, text, label) => {
+  navigator.clipboard.writeText(text);
+  btn.textContent = 'Copied';
+  setTimeout(()=>btn.textContent = label, 1200);
+};
+$('startBtn').onclick = start;
+$('binBtn').onclick   = closeBin;
+$('undoBtn').onclick  = undo;
+$('resetBtn').onclick = reset;
+$('csvBtn').onclick   = e => copy(e.target, csv(), 'Copy CSV (all bins)');
+$('jsonBtn').onclick  = e => copy(e.target, JSON.stringify(
+  {session:$('session').value, video_start_s:vstartSec(), bins}, null, 2), 'Copy JSON');
+$('sumBtn').onclick   = e => copy(e.target, summary(), 'Copy summary');
+
+buildRows(); render(); showBins();
+</script>
+</body>
+</html>

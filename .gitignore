@@ -1,0 +1,14 @@
+# User data — never commit someone's footage, weights or results
+uploads/*
+!uploads/.gitkeep
+models/*
+!models/.gitkeep
+rois/*
+!rois/.gitkeep
+
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+*_env/
+.DS_Store

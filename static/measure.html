@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SP1 — Overhead Distance Measurement</title>
+<style>
+  :root{
+    --bg:#12131a; --panel:#1b1d27; --line:#2c2f3d; --fg:#e8e9f0;
+    --dim:#8f94a8; --accent:#6ea8fe; --good:#5fd3a0; --warn:#ffb454; --bad:#ff6b6b;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+       font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+       display:flex;height:100vh;overflow:hidden}
+
+  #side{width:340px;flex:none;background:var(--panel);border-right:1px solid var(--line);
+        display:flex;flex-direction:column;overflow-y:auto}
+  #side header{padding:16px;border-bottom:1px solid var(--line)}
+  h1{font-size:15px;margin:0 0 4px}
+  .sub{color:var(--dim);font-size:12px}
+  section{padding:14px 16px;border-bottom:1px solid var(--line)}
+  h2{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--dim);
+     margin:0 0 10px;font-weight:600}
+
+  button{background:#2a2d3b;color:var(--fg);border:1px solid var(--line);border-radius:6px;
+         padding:7px 11px;font-size:13px;cursor:pointer;font-family:inherit}
+  button:hover{background:#343849}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#0b1020;font-weight:600}
+  button.primary:disabled{opacity:.35;cursor:not-allowed}
+  button.danger{color:var(--bad)}
+  input[type=text],input[type=number]{background:#0f1017;border:1px solid var(--line);
+       border-radius:6px;color:var(--fg);padding:7px 9px;font:inherit;width:100%}
+  label{display:block;font-size:12px;color:var(--dim);margin:8px 0 4px}
+  .row{display:flex;gap:8px;align-items:center}
+  .row > *{flex:1}
+
+  .badge{display:inline-block;padding:2px 7px;border-radius:4px;font-size:11px;font-weight:600}
+  .badge.on{background:rgba(95,211,160,.15);color:var(--good)}
+  .badge.off{background:rgba(255,180,84,.15);color:var(--warn)}
+
+  #scaleOut{font-size:13px;margin-top:8px;color:var(--dim)}
+  #scaleOut b{color:var(--fg)}
+
+  table{width:100%;border-collapse:collapse;font-size:12.5px}
+  th{text-align:left;color:var(--dim);font-weight:600;font-size:11px;
+     text-transform:uppercase;letter-spacing:.05em;padding:4px 4px}
+  td{padding:5px 4px;border-top:1px solid var(--line);vertical-align:middle}
+  td.val{text-align:right;font-variant-numeric:tabular-nums;font-weight:600}
+  td input{border:none;background:transparent;padding:2px}
+  td input:focus{background:#0f1017;border-radius:4px}
+  .x{color:var(--dim);cursor:pointer;padding:0 4px}
+  .x:hover{color:var(--bad)}
+
+  #stage{flex:1;position:relative;overflow:hidden;background:#0a0b10;
+         display:flex;align-items:center;justify-content:center}
+  canvas{cursor:crosshair;display:block}
+  #hint{position:absolute;bottom:16px;left:50%;transform:translateX(-50%);
+        background:rgba(10,11,16,.92);border:1px solid var(--line);border-radius:8px;
+        padding:9px 16px;font-size:13px;pointer-events:none;white-space:nowrap}
+  #empty{color:var(--dim);text-align:center;padding:40px;max-width:420px}
+  .note{font-size:12px;color:var(--dim);margin-top:8px;line-height:1.5}
+  kbd{background:#0f1017;border:1px solid var(--line);border-radius:4px;
+      padding:1px 5px;font-size:11px;font-family:ui-monospace,monospace}
+</style>
+</head>
+<body>
+
+<div id="side">
+  <header>
+    <h1>Overhead Distance Measurement</h1>
+    <div class="sub">SP1 [26008] · ABAC Bang Na T-intersection</div>
+  </header>
+
+  <section>
+    <h2>1 · Image</h2>
+    <input type="file" id="file" accept="image/*" style="font-size:12px">
+    <div class="note">Export a frame from the 90 m nadir clip. In QuickTime:
+      pause on a clear frame, <kbd>Edit ▸ Copy</kbd>, paste into Preview,
+      save as PNG. Use the highest resolution you have — every pixel is precision.</div>
+  </section>
+
+  <section>
+    <h2>2 · Set scale <span id="scaleBadge" class="badge off">not set</span></h2>
+    <button id="calBtn">Click two points on a known length</button>
+    <label>Real-world length of that reference (metres)</label>
+    <input type="number" id="refLen" value="4.5" step="0.05" min="0.1">
+    <div id="scaleOut">No scale yet — measurements stay in pixels.</div>
+    <div class="note">
+      <b>Pick the longest reference you can.</b> Scale error divides by
+      reference length, so calibrating on a 40 m lane marking is roughly ten
+      times more accurate than calibrating on one 4.5 m car.
+      <br><br>
+      Good references, best first: a dashed lane line over many cycles (Thai
+      standard 3 m mark + 9 m gap = 12 m period); a full zebra crossing width;
+      a row of stopped cars bumper-to-bumper. A single car is the last resort.
+    </div>
+  </section>
+
+  <section>
+    <h2>3 · Measure</h2>
+    <button id="measBtn" class="primary" disabled>Add measurement</button>
+    <div class="note">Click the start point, then the end point.
+      <kbd>Esc</kbd> cancels. Scroll to zoom, drag with
+      <kbd>Space</kbd> held to pan.</div>
+  </section>
+
+  <section style="flex:1">
+    <h2>Measurements</h2>
+    <table id="tbl">
+      <thead><tr><th>Label</th><th style="text-align:right">Length</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <div id="noMeas" class="note">Nothing measured yet.</div>
+  </section>
+
+  <section>
+    <h2>Checklist for SP1</h2>
+    <div class="note" id="checklist"></div>
+  </section>
+
+  <section>
+    <div class="row">
+      <button id="exportBtn">Export CSV</button>
+      <button id="clearBtn" class="danger">Clear all</button>
+    </div>
+  </section>
+</div>
+
+<div id="stage">
+  <div id="empty">
+    <h2 style="color:var(--dim)">No image loaded</h2>
+    <p>Load an overhead frame on the left, calibrate the scale against a known
+       length, then measure whatever you need.</p>
+    <p style="font-size:12.5px">This works because the shot is <b>nadir</b> —
+       camera pointing straight down — so scale is uniform across the frame.
+       On an oblique shot the same pixel distance means different real
+       distances at different depths, and this tool would quietly lie to you.</p>
+  </div>
+  <canvas id="cv" style="display:none"></canvas>
+  <div id="hint" style="display:none"></div>
+</div>
+
+<script>
+const CHECKLIST = [
+  ['Shared-lane storage length', 'stop line back to where the lane starts — sets how many straight cars can queue before left-turners are blocked'],
+  ['Lane width', 'sanity-check against the 3.0-3.5 m Thai standard; also validates your scale'],
+  ['Gate to CB stop line', 'Badin needs this for the CB approach geometry'],
+  ['T-junction to the adjacent 4-way', 'you observed ~78 m — confirm it, then compare against the 12-vehicle Bx queue'],
+  ['Stop line to crosswalk', 'small but affects effective green'],
+];
+
+const $ = s => document.querySelector(s);
+const cv = $('#cv'), ctx = cv.getContext('2d');
+let img = null, pxPerM = null, mode = null, pending = [], meas = [];
+let zoom = 1, panX = 0, panY = 0, spaceDown = false, dragging = false, dragFrom = null;
+
+$('#checklist').innerHTML = CHECKLIST
+  .map(([n, w]) => `<div style="margin-bottom:7px"><b style="color:var(--fg)">${n}</b><br>${w}</div>`)
+  .join('');
+
+$('#file').onchange = e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  const im = new Image();
+  im.onload = () => {
+    img = im;
+    const stage = $('#stage');
+    zoom = Math.min(stage.clientWidth / im.width, stage.clientHeight / im.height, 1);
+    panX = panY = 0;
+    $('#empty').style.display = 'none';
+    cv.style.display = 'block';
+    draw();
+  };
+  im.src = URL.createObjectURL(f);
+};
+
+function draw() {
+  if (!img) return;
+  cv.width = img.width * zoom;
+  cv.height = img.height * zoom;
+  ctx.drawImage(img, 0, 0, cv.width, cv.height);
+
+  const P = p => [p[0] * zoom, p[1] * zoom];
+
+  // committed measurements
+  meas.forEach((m, i) => {
+    const [a, b] = [P(m.a), P(m.b)];
+    line(a, b, '#6ea8fe', 2.5);
+    dot(a, '#6ea8fe'); dot(b, '#6ea8fe');
+    const mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+    tag(mid, fmt(m), '#6ea8fe');
+  });
+
+  // calibration reference
+  if (window.__cal) {
+    const [a, b] = [P(window.__cal.a), P(window.__cal.b)];
+    line(a, b, '#5fd3a0', 2.5);
+    dot(a, '#5fd3a0'); dot(b, '#5fd3a0');
+  }
+
+  // in-progress
+  if (pending.length === 1) dot(P(pending[0]), mode === 'cal' ? '#5fd3a0' : '#ffb454');
+}
+
+function line(a, b, c, w) {
+  ctx.strokeStyle = c; ctx.lineWidth = w;
+  ctx.beginPath(); ctx.moveTo(...a); ctx.lineTo(...b); ctx.stroke();
+}
+function dot(p, c) {
+  ctx.fillStyle = c; ctx.strokeStyle = '#0a0b10'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(p[0], p[1], 5, 0, 7); ctx.fill(); ctx.stroke();
+}
+function tag(p, txt, c) {
+  ctx.font = '600 13px -apple-system,sans-serif';
+  const w = ctx.measureText(txt).width + 12;
+  ctx.fillStyle = 'rgba(10,11,16,.88)';
+  ctx.fillRect(p[0] - w / 2, p[1] - 26, w, 20);
+  ctx.strokeStyle = c; ctx.lineWidth = 1;
+  ctx.strokeRect(p[0] - w / 2, p[1] - 26, w, 20);
+  ctx.fillStyle = c; ctx.textAlign = 'center';
+  ctx.fillText(txt, p[0], p[1] - 12);
+  ctx.textAlign = 'left';
+}
+
+const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+const fmt = m => pxPerM ? (dist(m.a, m.b) / pxPerM).toFixed(2) + ' m'
+                        : dist(m.a, m.b).toFixed(0) + ' px';
+
+cv.onclick = e => {
+  if (!mode || spaceDown) return;
+  const r = cv.getBoundingClientRect();
+  const p = [(e.clientX - r.left) / zoom, (e.clientY - r.top) / zoom];
+  pending.push(p);
+  if (pending.length === 2) {
+    if (mode === 'cal') {
+      const px = dist(pending[0], pending[1]);
+      if (px > 3) {
+        window.__cal = { a: pending[0], b: pending[1], px };
+        applyScale();
+      }
+    } else {
+      meas.push({ a: pending[0], b: pending[1], label: 'measurement ' + (meas.length + 1) });
+      renderTable();
+    }
+    pending = []; mode = null; $('#hint').style.display = 'none';
+  } else {
+    $('#hint').textContent = 'Now click the end point  ·  Esc to cancel';
+  }
+  draw();
+};
+
+// Recompute the scale whenever the reference length changes, so editing the
+// number after clicking works. Previously the scale was frozen at click time,
+// which silently kept a stale value.
+function applyScale() {
+  if (!window.__cal) return;
+  const real = parseFloat($('#refLen').value);
+  if (!(real > 0)) return;
+  const px = window.__cal.px;
+  pxPerM = px / real;
+  $('#scaleBadge').className = 'badge on';
+  $('#scaleBadge').textContent = 'set';
+  $('#scaleOut').innerHTML =
+    `<b>${pxPerM.toFixed(2)} px/m</b> &nbsp;·&nbsp; ${(100 / pxPerM).toFixed(1)} cm per pixel` +
+    `<br><span style="font-size:12px">reference ${px.toFixed(0)} px = ${real} m</span>`;
+  $('#measBtn').disabled = false;
+  renderTable();          // every existing measurement rescales too
+  draw();
+}
+$('#refLen').oninput = applyScale;
+
+$('#calBtn').onclick = () => start('cal', 'Click the START of your known length');
+$('#measBtn').onclick = () => start('meas', 'Click the START point');
+function start(m, msg) {
+  if (!img) return alert('Load an image first.');
+  mode = m; pending = [];
+  $('#hint').style.display = 'block';
+  $('#hint').textContent = msg + '  ·  Esc to cancel';
+  draw();
+}
+
+addEventListener('keydown', e => {
+  if (e.code === 'Escape') { mode = null; pending = []; $('#hint').style.display = 'none'; draw(); }
+  if (e.code === 'Space' && !spaceDown) { spaceDown = true; cv.style.cursor = 'grab'; e.preventDefault(); }
+});
+addEventListener('keyup', e => {
+  if (e.code === 'Space') { spaceDown = false; cv.style.cursor = 'crosshair'; }
+});
+
+$('#stage').onwheel = e => {
+  if (!img) return;
+  e.preventDefault();
+  zoom = Math.min(8, Math.max(0.05, zoom * (e.deltaY < 0 ? 1.12 : 1 / 1.12)));
+  draw();
+};
+
+function renderTable() {
+  const tb = $('#tbl tbody');
+  tb.innerHTML = '';
+  $('#noMeas').style.display = meas.length ? 'none' : 'block';
+  meas.forEach((m, i) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td><input type="text" value="${m.label}"></td>
+                    <td class="val">${fmt(m)}</td>
+                    <td class="x">×</td>`;
+    tr.querySelector('input').oninput = e => { m.label = e.target.value; };
+    tr.querySelector('.x').onclick = () => { meas.splice(i, 1); renderTable(); draw(); };
+    tb.appendChild(tr);
+  });
+}
+
+$('#exportBtn').onclick = () => {
+  if (!meas.length) return alert('Nothing to export yet.');
+  const rows = [['label', 'metres', 'pixels', 'px_per_m']];
+  meas.forEach(m => rows.push([
+    m.label,
+    pxPerM ? (dist(m.a, m.b) / pxPerM).toFixed(3) : '',
+    dist(m.a, m.b).toFixed(1),
+    pxPerM ? pxPerM.toFixed(3) : ''
+  ]));
+  const blob = new Blob([rows.map(r => r.join(',')).join('\n')], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'sp1_site_distances.csv';
+  a.click();
+};
+
+$('#clearBtn').onclick = () => {
+  if (!confirm('Clear all measurements? The scale is kept.')) return;
+  meas = []; renderTable(); draw();
+};
+
+renderTable();
+</script>
+</body>
+</html>

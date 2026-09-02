@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SP1 Saturation Headway</title>
+<style>
+  :root{ --bg:#14161a; --panel:#1c2027; --line:#2c323c; --ink:#e8ecf2;
+         --dim:#8b95a5; --accent:#4a9eff; --ok:#3ecf8e; --warn:#ffb020; }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:15px/1.5 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+       padding:18px 22px 60px}
+  h1{font-size:19px;margin:0 0 2px}
+  .sub{color:var(--dim);font-size:13px;margin-bottom:14px}
+  .note{background:#182430;border:1px solid #274056;color:#a9cdf0;
+        border-radius:8px;padding:10px 13px;font-size:13px;margin-bottom:14px}
+  .note b{color:#d7e9fb}
+  .bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;
+       background:var(--panel);border:1px solid var(--line);
+       border-radius:10px;padding:11px 13px;margin-bottom:14px}
+  input{background:#12151a;border:1px solid var(--line);color:var(--ink);
+        border-radius:7px;padding:7px 9px;font-size:14px;font-family:inherit}
+  button{background:#2a3140;border:1px solid var(--line);color:var(--ink);
+         border-radius:7px;padding:7px 13px;font-size:14px;cursor:pointer;
+         font-family:inherit}
+  button:hover{background:#333c4d}
+  button.big{background:var(--accent);border-color:var(--accent);color:#04111f;
+             font-weight:700;font-size:22px;padding:22px 0;width:100%;
+             border-radius:12px;margin-bottom:12px}
+  button.big:active{transform:scale(.98)}
+  button.danger{background:#3a2226;border-color:#5a2f36;color:#ffb3b3}
+  .kbd{font:11px ui-monospace,Menlo,monospace;color:var(--dim);
+       border:1px solid var(--line);border-radius:4px;padding:1px 5px}
+  .clock{font-variant-numeric:tabular-nums;font-size:26px;font-weight:600;min-width:92px}
+  .clock.run{color:var(--ok)}
+  table{width:100%;border-collapse:collapse;background:var(--panel);
+        border:1px solid var(--line);border-radius:10px;overflow:hidden;margin-bottom:14px}
+  th,td{padding:7px 11px;text-align:left;border-bottom:1px solid var(--line);
+        font-variant-numeric:tabular-nums}
+  th{background:#191d24;font-size:11px;text-transform:uppercase;
+     letter-spacing:.7px;color:var(--dim);font-weight:600}
+  tr:last-child td{border-bottom:none}
+  tr.sat td{color:var(--ok)}
+  tr.start td{color:var(--warn)}
+  h2{font-size:12.5px;text-transform:uppercase;letter-spacing:.8px;
+     color:var(--dim);margin:20px 0 9px}
+  pre{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+      padding:13px;overflow:auto;font:13px/1.6 ui-monospace,Menlo,monospace;color:#cfd8e3}
+  .big-num{font-size:30px;font-weight:700;color:var(--ok)}
+</style>
+</head>
+<body>
+
+<h1>SP1 Saturation Headway</h1>
+<div class="sub">Discharge rate measurement — ABAC T-intersection</div>
+
+<div class="note">
+  <b>Method (HCM).</b> Find a green phase with a standing queue. Tap once as each
+  vehicle's <b>front wheels cross the stop line</b>, starting with the first vehicle
+  when the light turns green.
+  <br>The first 3–4 vehicles are slower — that is <b>startup lost time</b>.
+  <b>Saturation headway</b> is the average gap from vehicle 4 onward.
+  <br>Do <b>3–4 separate green phases</b>, pressing "New cycle" between them.
+  Use the lane with the longest queue (probably Bx in B_morning).
+</div>
+
+<div class="bar">
+  <input id="session" placeholder="Session / lane (e.g. B_morning Bx)" style="width:230px">
+  <div class="clock" id="clock">0.0s</div>
+  <span class="kbd" id="cyclbl">cycle 1 · 0 vehicles</span>
+  <button id="newBtn">New cycle <span class="kbd">N</span></button>
+  <button id="undoBtn">Undo <span class="kbd">⌫</span></button>
+  <button class="danger" id="resetBtn">Reset all</button>
+</div>
+
+<button class="big" id="tapBtn">TAP as each vehicle crosses &nbsp;<span class="kbd">SPACE</span></button>
+
+<table>
+  <thead><tr><th style="width:70px">Vehicle</th><th>Time since green</th>
+             <th>Headway</th><th>Note</th></tr></thead>
+  <tbody id="rows"><tr><td colspan="4" style="color:#4a525f">
+    Press SPACE when the light turns green and the first vehicle moves.</td></tr></tbody>
+</table>
+
+<h2>Result</h2>
+<pre id="out">—</pre>
+<button id="copyBtn">Copy for Badin</button>
+
+<script>
+// Saturation headway is measured from this vehicle onward. HCM uses the 4th
+// or 5th; earlier vehicles are still accelerating from rest and their longer
+// headways are startup lost time, not capacity.
+const SAT_FROM = 4;
+
+let cycles = [[]];          // each cycle = array of timestamps (seconds since green)
+let t0 = null;              // green onset for the current cycle
+const $ = id => document.getElementById(id);
+const cur = () => cycles[cycles.length-1];
+
+function tap(){
+  const now = performance.now()/1000;
+  if (t0 === null){ t0 = now; cur().push(0); }   // first tap = green onset
+  else cur().push(+(now-t0).toFixed(2));
+  render();
+}
+
+function undo(){
+  if (!cur().length) return;
+  cur().pop();
+  if (!cur().length) t0 = null;
+  render();
+}
+
+function newCycle(){
+  if (!cur().length) return;
+  cycles.push([]); t0 = null; render();
+}
+
+function reset(){
+  if (!confirm('Clear everything?')) return;
+  cycles=[[]]; t0=null; render();
+}
+
+function headways(ts){
+  const h=[];
+  for (let i=1;i<ts.length;i++) h.push(+(ts[i]-ts[i-1]).toFixed(2));
+  return h;
+}
+
+function render(){
+  const ts = cur(), h = headways(ts);
+  $('cyclbl').textContent = `cycle ${cycles.length} · ${ts.length} vehicles`;
+
+  if (!ts.length){
+    $('rows').innerHTML = '<tr><td colspan="4" style="color:#4a525f">'+
+      'Press SPACE when the light turns green and the first vehicle moves.</td></tr>';
+  } else {
+    $('rows').innerHTML = ts.map((t,i)=>{
+      const gap = i===0 ? '—' : h[i-1].toFixed(2)+'s';
+      const sat = (i+1) >= SAT_FROM;
+      const note = i===0 ? 'green onset'
+                 : sat ? 'saturation' : 'starting up';
+      return `<tr class="${sat?'sat':'start'}"><td>${i+1}</td>`+
+             `<td>${t.toFixed(2)}s</td><td>${gap}</td><td>${note}</td></tr>`;
+    }).join('');
+  }
+  result();
+}
+
+function result(){
+  // pool saturation headways across every cycle
+  let satAll=[], startAll=[], n=0;
+  cycles.forEach(ts=>{
+    if (ts.length<2) return;
+    n++;
+    const h=headways(ts);
+    h.forEach((v,i)=>{                 // h[i] is the gap INTO vehicle i+2
+      if ((i+2) >= SAT_FROM) satAll.push(v); else startAll.push(v);
+    });
+  });
+
+  if (!satAll.length){
+    $('out').textContent = 'Need at least '+SAT_FROM+' vehicles in a cycle.';
+    return;
+  }
+  const mean = a => a.reduce((x,y)=>x+y,0)/a.length;
+  const sat = mean(satAll);
+  const sd  = Math.sqrt(mean(satAll.map(v=>(v-sat)**2)));
+  // startup lost time = extra time the first vehicles took vs saturation
+  // Startup lost time is a PER-CYCLE quantity — the extra time the first few
+  // vehicles take compared with saturation flow. Summing it across cycles and
+  // reporting the total is meaningless and reads ~5x too high.
+  const lostTotal = startAll.reduce((s,v)=>s+Math.max(0,v-sat),0);
+  const lost = lostTotal / Math.max(n,1);
+  const satFlow = 3600/sat;
+
+  const L=[];
+  L.push(`Session : ${$('session').value || '(unnamed)'}`);
+  L.push(`Cycles  : ${n}   saturation headways sampled: ${satAll.length}`);
+  L.push('');
+  L.push(`SATURATION HEADWAY   ${sat.toFixed(2)} s/veh   (sd ${sd.toFixed(2)})`);
+  L.push(`SATURATION FLOW      ${satFlow.toFixed(0)} veh/hr/lane`);
+  L.push(`STARTUP LOST TIME    ${lost.toFixed(2)} s per cycle   (HCM default 2.00)`);
+  L.push('');
+  L.push(`HCM default is 2.00 s/veh = 1800 veh/hr/lane.`);
+  L.push(`The model previously assumed 1440 veh/hr/lane (2.50 s/veh).`);
+  const vs = 1440;
+  L.push(`Discharge is ${(satFlow/vs).toFixed(2)}x faster than assumed,`);
+  L.push(`but startup lost time removes ${lost.toFixed(1)}s from every green phase.`);
+  L.push('');
+  L.push(`Vehicles cleared per green phase = (green - ${lost.toFixed(1)}) / ${sat.toFixed(2)}`);
+  L.push(`  20s green -> ${((20-lost)/sat).toFixed(1)} veh`);
+  L.push(`  30s green -> ${((30-lost)/sat).toFixed(1)} veh`);
+  L.push(`  40s green -> ${((40-lost)/sat).toFixed(1)} veh`);
+  $('out').textContent = L.join('\n');
+}
+
+let raf;
+(function tick(){
+  $('clock').textContent = t0===null ? '0.0s'
+    : (performance.now()/1000 - t0).toFixed(1)+'s';
+  $('clock').className = 'clock' + (t0===null?'':' run');
+  raf = requestAnimationFrame(tick);
+})();
+
+document.addEventListener('keydown', e=>{
+  if (e.target.tagName==='INPUT') return;
+  if (e.code==='Space'){ e.preventDefault(); tap(); }
+  else if (e.key==='Backspace'){ e.preventDefault(); undo(); }
+  else if (e.key.toLowerCase()==='n'){ e.preventDefault(); newCycle(); }
+});
+$('tapBtn').onclick   = tap;
+$('undoBtn').onclick  = undo;
+$('newBtn').onclick   = newCycle;
+$('resetBtn').onclick = reset;
+$('copyBtn').onclick  = e => {
+  navigator.clipboard.writeText($('out').textContent);
+  e.target.textContent='Copied';
+  setTimeout(()=>e.target.textContent='Copy for Badin',1200);
+};
+render();
+</script>
+</body>
+</html>

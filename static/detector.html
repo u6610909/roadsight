@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Vehicle Counter</title>
+<style>
+  :root{--bg:#0e0f14;--panel:#171922;--line:#262a37;--fg:#e9eaf2;--dim:#8b90a6;
+        --accent:#6ea8fe;--good:#5fd3a0;--bad:#ff6b6b}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);height:100vh;overflow:hidden;
+       font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;display:flex}
+  #side{width:380px;flex:none;background:var(--panel);border-right:1px solid var(--line);
+        display:flex;flex-direction:column;overflow-y:auto}
+  header{padding:15px 18px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:11px}
+  header a{color:var(--dim);text-decoration:none;font-size:19px}header a:hover{color:var(--fg)}
+  h1{font-size:15px;margin:0}.sub{color:var(--dim);font-size:11.5px}
+  section{padding:14px 18px;border-bottom:1px solid var(--line)}
+  h2{font-size:10.5px;text-transform:uppercase;letter-spacing:.09em;color:var(--dim);
+     margin:0 0 10px;font-weight:700;display:flex;justify-content:space-between}
+  label{display:block;font-size:11.5px;color:var(--dim);margin:9px 0 4px}
+  select,input[type=text],input[type=number]{width:100%;background:#0c0d12;border:1px solid var(--line);
+       border-radius:7px;color:var(--fg);padding:7px 9px;font:inherit;font-size:13px}
+  select:focus,input:focus{outline:none;border-color:var(--accent)}
+  .row{display:flex;gap:8px}.row>*{flex:1}
+  button{background:#242836;color:var(--fg);border:1px solid var(--line);border-radius:7px;
+         padding:8px 12px;font:inherit;font-size:13px;cursor:pointer;width:100%}
+  button:hover:not(:disabled){background:#2e3346}button:disabled{opacity:.4;cursor:not-allowed}
+  button.go{background:var(--accent);border-color:var(--accent);color:#08101f;font-weight:650}
+  button.stop{background:#3a1f22;border-color:#5c2a2f;color:#ff9b9b}
+  .drop{border:1.5px dashed #333949;border-radius:9px;padding:14px;text-align:center;
+        color:var(--dim);font-size:12.5px;cursor:pointer;transition:.15s}
+  .drop:hover,.drop.over{border-color:var(--accent);color:var(--fg);background:#12151d}
+  .hint{font-size:11.5px;color:var(--dim);margin-top:9px;line-height:1.5}
+  .lane{display:flex;align-items:center;gap:8px;padding:6px 0;border-top:1px solid var(--line)}
+  .sw{width:11px;height:11px;border-radius:3px;flex:none}
+  .lane input{flex:1;padding:4px 7px;font-size:12.5px}
+  .lane .del{color:var(--dim);cursor:pointer;padding:0 4px;font-size:15px}
+  .lane .del:hover{color:var(--bad)}
+  #stage{flex:1;position:relative;display:flex;align-items:center;justify-content:center;
+         background:#08090d;overflow:hidden}
+  canvas{cursor:crosshair;max-width:100%;max-height:100%}
+  #empty{color:var(--dim);text-align:center;max-width:460px;padding:30px}
+  #banner{position:absolute;top:16px;left:50%;transform:translateX(-50%);background:rgba(10,11,16,.94);
+          border:1px solid var(--line);border-radius:9px;padding:9px 17px;font-size:13px;pointer-events:none}
+  #res{position:absolute;right:16px;top:16px;width:320px;background:rgba(17,19,26,.97);
+       border:1px solid var(--line);border-radius:11px;padding:15px;display:none}
+  .bar{height:5px;background:#22262f;border-radius:3px;overflow:hidden;margin:9px 0}
+  .bar i{display:block;height:100%;background:var(--accent);width:0;transition:width .3s}
+  .stat{display:flex;justify-content:space-between;font-size:12px;color:var(--dim);
+        font-variant-numeric:tabular-nums}
+  table{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:11px}
+  th{text-align:right;color:var(--dim);font-size:10px;text-transform:uppercase;padding:4px 3px}
+  th:first-child{text-align:left}
+  td{padding:4px 3px;border-top:1px solid var(--line);text-align:right;font-variant-numeric:tabular-nums}
+  td:first-child{text-align:left;font-weight:600}
+  .err{background:#3a1f22;border:1px solid #5c2a2f;color:#ffb3b3;padding:9px 11px;
+       border-radius:7px;font-size:12.5px;margin-top:10px}
+  kbd{background:#0c0d12;border:1px solid var(--line);border-radius:4px;padding:1px 5px;font-size:11px}
+  progress{width:100%;height:5px}
+</style>
+</head>
+<body>
+
+<div id="side">
+  <header><a href="/" title="Back">←</a>
+    <div><h1>Vehicle Counter</h1><div class="sub">detect · track · count</div></div></header>
+
+  <section>
+    <h2>1 · Video</h2>
+    <div class="drop" id="vDrop">Drop a video here, or click to choose<br>
+      <span style="font-size:11px">mp4 · mov · avi · mkv</span></div>
+    <input type="file" id="vFile" accept="video/*" hidden>
+    <div id="vProg" style="display:none"><progress id="vBar" max="100" value="0"></progress></div>
+    <label>Or pick one already uploaded</label>
+    <select id="video"><option value="">—</option></select>
+    <div class="row" style="margin-top:8px">
+      <input type="number" id="frameAt" value="0" min="0" step="5" title="seconds into the video">
+      <button id="loadBtn" style="flex:0 0 100px">Load frame</button>
+    </div>
+    <div class="hint" id="vInfo"></div>
+  </section>
+
+  <section>
+    <h2>2 · Model</h2>
+    <div class="drop" id="mDrop">Drop a YOLO <b>.pt</b> file here, or click</div>
+    <input type="file" id="mFile" accept=".pt" hidden>
+    <div id="mProg" style="display:none"><progress id="mBar" max="100" value="0"></progress></div>
+    <select id="model" style="margin-top:8px"><option value="">—</option></select>
+  </section>
+
+  <section>
+    <h2>3 · Regions <span id="rc"></span></h2>
+    <div class="row"><button id="drawBtn">+ Draw region</button><button id="undoBtn">Undo point</button></div>
+    <label>Load a saved region set</label>
+    <select id="roiFile"><option value="">—</option></select>
+    <div id="lanes"></div>
+    <div class="row" style="margin-top:10px">
+      <input type="text" id="saveName" placeholder="my_site.json">
+      <button id="saveBtn" style="flex:0 0 66px">Save</button>
+    </div>
+    <div class="hint">Click to place points · <kbd>Enter</kbd> or double-click closes the shape ·
+      <kbd>Esc</kbd> cancels. Name each region after the movement it covers.</div>
+  </section>
+
+  <section>
+    <h2>4 · Settings</h2>
+    <div class="row">
+      <div><label>Confidence</label><input type="number" id="conf" step="0.01" min="0.01" max="0.9"></div>
+      <div><label>Window (s)</label><input type="number" id="window" step="0.5" min="1"></div>
+    </div>
+    <div class="row">
+      <div><label>Image size</label><select id="imgsz">
+        <option>640</option><option>960</option><option selected>1280</option></select></div>
+      <div><label>Device</label><select id="device">
+        <option value="auto" selected>auto</option><option>cpu</option><option>mps</option><option>0</option>
+      </select></div>
+    </div>
+    <div class="row">
+      <div><label>Start at (s)</label><input type="number" id="start" value="0" min="0"></div>
+      <div><label>Length (s)</label><input type="number" id="duration" value="120" min="0"></div>
+    </div>
+    <div class="hint"><b>Length 0 processes the whole video.</b> On a laptop CPU that is
+      roughly real-time ÷ 8, so a 25-minute clip takes hours. Start short.</div>
+  </section>
+
+  <section>
+    <button class="go" id="runBtn" disabled>Count vehicles</button>
+    <button class="stop" id="stopBtn" style="display:none;margin-top:8px">Stop</button>
+    <div class="row" style="margin-top:8px">
+      <button id="csvBtn" disabled>Export CSV</button><button id="jsonBtn" disabled>Export JSON</button>
+    </div>
+  </section>
+</div>
+
+<div id="stage">
+  <div id="empty">
+    <h2 style="color:var(--dim);letter-spacing:.09em">Nothing loaded</h2>
+    <p style="color:#9aa0b5">Upload a video and a trained model, load a frame, then draw a
+      region over each movement you want counted.</p>
+    <p style="color:var(--dim);font-size:12.5px">A vehicle is counted once — when its tracked
+      centre first enters a region, and only after it has actually moved. Parked vehicles in
+      view are not traffic and are excluded automatically.</p>
+  </div>
+  <canvas id="cv" style="display:none"></canvas>
+  <div id="banner" style="display:none"></div>
+  <div id="res">
+    <div style="display:flex;justify-content:space-between;align-items:baseline">
+      <b id="rT">Counting</b><span class="sub" id="rDev"></span></div>
+    <div class="bar"><i id="rBar"></i></div>
+    <div class="stat"><span id="rPct">0%</span><span id="rEta"></span></div>
+    <div class="stat"><span id="rFps"></span><span id="rVt"></span></div>
+    <div id="rErr"></div>
+    <table><thead><tr><th>Region</th><th>car</th><th>moto</th><th>hvy</th><th>total</th></tr></thead>
+      <tbody id="rBody"></tbody></table>
+  </div>
+</div>
+
+<script>
+const $=s=>document.querySelector(s);
+const COLORS=['#6ea8fe','#5fd3a0','#ffb454','#c792ea','#ff8fa3','#4dd0e1'];
+let img=null,scale=1,polys=[],draft=null,drawing=false,job=null,poll=null;
+
+async function refreshLibrary(){
+  const d=await fetch('/api/library').then(r=>r.json());
+  $('#video').innerHTML='<option value="">—</option>'+
+    d.videos.map(v=>`<option value="${v.name}">${v.name} · ${v.mb} MB</option>`).join('');
+  $('#model').innerHTML=(d.models.length?'':'<option value="">no model uploaded</option>')+
+    d.models.map(m=>`<option value="${m.name}">${m.name} · ${m.mb} MB</option>`).join('');
+  $('#roiFile').innerHTML='<option value="">—</option>'+
+    d.rois.map(r=>`<option value="${r.name}">${r.name} · ${r.lanes.join(', ')}</option>`).join('');
+  if(!$('#conf').value){$('#conf').value=d.defaults.conf;$('#window').value=d.defaults.window;}
+  gate();
+}
+refreshLibrary();
+
+// ── uploads ──────────────────────────────────────────────────────────────────
+function wireDrop(dropSel,inputSel,kind,progSel,barSel,onDone){
+  const drop=$(dropSel),inp=$(inputSel);
+  drop.onclick=()=>inp.click();
+  drop.ondragover=e=>{e.preventDefault();drop.classList.add('over')};
+  drop.ondragleave=()=>drop.classList.remove('over');
+  drop.ondrop=e=>{e.preventDefault();drop.classList.remove('over');
+                  if(e.dataTransfer.files[0])send(e.dataTransfer.files[0])};
+  inp.onchange=()=>inp.files[0]&&send(inp.files[0]);
+
+  function send(file){
+    const fd=new FormData();fd.append('file',file);
+    const xhr=new XMLHttpRequest();
+    $(progSel).style.display='block';
+    xhr.upload.onprogress=e=>{if(e.lengthComputable)$(barSel).value=e.loaded/e.total*100};
+    xhr.onload=async()=>{
+      $(progSel).style.display='none';$(barSel).value=0;
+      let r={};try{r=JSON.parse(xhr.responseText)}catch(e){}
+      if(r.error)return alert(r.error);
+      await refreshLibrary();onDone(r.name);
+    };
+    xhr.onerror=()=>{$(progSel).style.display='none';alert('Upload failed.')};
+    xhr.open('POST','/api/upload/'+kind);xhr.send(fd);
+  }
+}
+wireDrop('#vDrop','#vFile','video','#vProg','#vBar',n=>{$('#video').value=n;$('#loadBtn').click()});
+wireDrop('#mDrop','#mFile','model','#mProg','#mBar',n=>{$('#model').value=n;gate()});
+
+// ── frame ────────────────────────────────────────────────────────────────────
+$('#loadBtn').onclick=async()=>{
+  const v=$('#video').value;if(!v)return;
+  $('#loadBtn').textContent='…';
+  const r=await fetch(`/api/frame?video=${encodeURIComponent(v)}&t=${$('#frameAt').value}`).then(r=>r.json());
+  $('#loadBtn').textContent='Load frame';
+  if(r.error)return alert(r.error);
+  const im=new Image();
+  im.onload=()=>{img=im;const st=$('#stage');
+    scale=Math.min(st.clientWidth/im.width,st.clientHeight/im.height,1);
+    $('#empty').style.display='none';$('#cv').style.display='block';
+    $('#vInfo').textContent=`${r.width}×${r.height} · ${r.fps} fps · ${r.duration}s`;
+    draw();gate();};
+  im.src=r.image;
+};
+
+$('#roiFile').onchange=async e=>{
+  if(!e.target.value)return;
+  const d=await fetch('/api/roi/'+e.target.value).then(r=>r.json());
+  if(d.error)return alert(d.error);
+  polys=Object.entries(d).map(([name,pts],i)=>({name,pts,color:COLORS[i%COLORS.length]}));
+  draw();lanes();
+};
+
+// ── drawing ──────────────────────────────────────────────────────────────────
+$('#drawBtn').onclick=()=>{
+  if(!img)return alert('Load a frame first.');
+  drawing=true;draft={name:'region '+(polys.length+1),pts:[],color:COLORS[polys.length%COLORS.length]};
+  banner('Click to place points · Enter or double-click to close · Esc to cancel');draw();
+};
+$('#undoBtn').onclick=()=>{if(draft&&draft.pts.length){draft.pts.pop();draw()}};
+$('#cv').onclick=e=>{
+  if(!drawing)return;const r=$('#cv').getBoundingClientRect();
+  draft.pts.push([Math.round((e.clientX-r.left)/scale),Math.round((e.clientY-r.top)/scale)]);draw();
+};
+$('#cv').ondblclick=close_;
+addEventListener('keydown',e=>{
+  if(e.key==='Enter')close_();
+  if(e.key==='Escape'){drawing=false;draft=null;banner(null);draw()}
+});
+function close_(){if(!draft||draft.pts.length<3)return;polys.push(draft);draft=null;drawing=false;
+  banner(null);draw();lanes()}
+
+function draw(){
+  if(!img)return;
+  const cv=$('#cv'),x=cv.getContext('2d');
+  cv.width=img.width*scale;cv.height=img.height*scale;
+  x.drawImage(img,0,0,cv.width,cv.height);
+  const P=p=>[p[0]*scale,p[1]*scale];
+  [...polys,...(draft?[draft]:[])].forEach(o=>{
+    if(!o.pts.length)return;
+    x.beginPath();o.pts.forEach((p,i)=>{const q=P(p);i?x.lineTo(...q):x.moveTo(...q)});
+    if(o!==draft){x.closePath();x.fillStyle=o.color+'33';x.fill()}
+    x.strokeStyle=o.color;x.lineWidth=2.5;x.stroke();
+    o.pts.forEach(p=>{const q=P(p);x.beginPath();x.arc(q[0],q[1],4.5,0,7);
+      x.fillStyle=o.color;x.fill();x.strokeStyle='#08090d';x.lineWidth=1.5;x.stroke()});
+    if(o!==draft){
+      const c=o.pts.reduce((a,p)=>[a[0]+p[0]/o.pts.length,a[1]+p[1]/o.pts.length],[0,0]);
+      x.font='600 14px -apple-system,sans-serif';x.textAlign='center';
+      const w=x.measureText(o.name).width+16;
+      x.fillStyle='rgba(8,9,13,.82)';x.fillRect(c[0]*scale-w/2,c[1]*scale-13,w,22);
+      x.fillStyle=o.color;x.fillText(o.name,c[0]*scale,c[1]*scale+3);x.textAlign='left';
+    }
+  });
+}
+function banner(t){$('#banner').style.display=t?'block':'none';if(t)$('#banner').textContent=t}
+
+function lanes(){
+  $('#rc').textContent=polys.length?polys.length+' set':'';
+  $('#lanes').innerHTML='';
+  polys.forEach((p,i)=>{
+    const d=document.createElement('div');d.className='lane';
+    d.innerHTML=`<span class="sw" style="background:${p.color}"></span><input value="${p.name}"><span class="del">×</span>`;
+    d.querySelector('input').oninput=e=>{p.name=e.target.value;draw()};
+    d.querySelector('.del').onclick=()=>{polys.splice(i,1);draw();lanes()};
+    $('#lanes').appendChild(d);
+  });
+  gate();
+}
+function gate(){$('#runBtn').disabled=!(polys.length&&img&&$('#model').value&&$('#video').value)}
+$('#model').onchange=gate;$('#video').onchange=gate;
+
+$('#saveBtn').onclick=async()=>{
+  let n=$('#saveName').value.trim();
+  if(!n)return alert('Give the region set a filename.');
+  if(!n.endsWith('.json'))n+='.json';
+  const body={};polys.forEach(p=>body[p.name]=p.pts);
+  const r=await fetch('/api/roi/'+n,{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(body)}).then(r=>r.json());
+  if(r.error)return alert(r.error);
+  await refreshLibrary();alert('Saved '+r.saved);
+};
+
+// ── run ──────────────────────────────────────────────────────────────────────
+$('#runBtn').onclick=async()=>{
+  const rois={};polys.forEach(p=>rois[p.name]=p.pts);
+  const cfg={video:$('#video').value,model:$('#model').value,rois,
+    conf:+$('#conf').value,window:+$('#window').value,imgsz:+$('#imgsz').value,
+    device:$('#device').value,start:+$('#start').value,duration:+$('#duration').value};
+  const r=await fetch('/api/run',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(cfg)}).then(r=>r.json());
+  if(r.error)return alert(r.error);
+  job=r.job;$('#res').style.display='block';$('#rErr').innerHTML='';
+  $('#runBtn').style.display='none';$('#stopBtn').style.display='block';
+  $('#csvBtn').disabled=$('#jsonBtn').disabled=true;
+  poll=setInterval(tick,700);tick();
+};
+$('#stopBtn').onclick=()=>fetch(`/api/job/${job}/stop`,{method:'POST'});
+$('#csvBtn').onclick=()=>location.href=`/api/job/${job}/export.csv`;
+$('#jsonBtn').onclick=()=>location.href=`/api/job/${job}/export.json`;
+
+async function tick(){
+  const s=await fetch('/api/job/'+job).then(r=>r.json());
+  $('#rBar').style.width=(s.progress*100).toFixed(1)+'%';
+  $('#rPct').textContent=(s.progress*100).toFixed(1)+'%';
+  $('#rDev').textContent=s.device||'';
+  $('#rFps').textContent=s.fps?s.fps+' fps':'';
+  $('#rVt').textContent=s.video_t?'video '+s.video_t+'s':'';
+  $('#rEta').textContent=s.eta?'~'+fmt(s.eta)+' left':'';
+  $('#rBody').innerHTML=Object.entries(s.totals||{}).map(([l,g])=>
+    `<tr><td>${l}</td><td>${g.car}</td><td>${g.moto}</td><td>${g.heavy}</td><td><b>${g.car+g.moto+g.heavy}</b></td></tr>`).join('');
+  if(s.state==='error')$('#rErr').innerHTML=`<div class="err">${s.error}</div>`;
+  if(s.state!=='running'){
+    clearInterval(poll);
+    $('#rT').textContent=s.state==='done'?'Complete':s.state==='stopped'?'Stopped':'Failed';
+    $('#runBtn').style.display='block';$('#stopBtn').style.display='none';
+    if(s.state!=='error')$('#csvBtn').disabled=$('#jsonBtn').disabled=false;
+  }
+}
+const fmt=s=>s>90?Math.round(s/60)+' min':Math.round(s)+' s';
+</script>
+</body>
+</html>
