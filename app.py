@@ -134,7 +134,22 @@ def upload(kind):
 
     dest = (UPLOADS if kind == "video" else MODELS) / name
     f.save(dest)
-    return jsonify({"name": name, "mb": round(dest.stat().st_size / 1e6, 1)})
+
+    # A truncated or empty file is accepted happily here and then fails much
+    # later with an opaque UnpicklingError once a job starts. Catch it now: a
+    # real YOLO checkpoint is megabytes, and any video worth counting is larger
+    # still.
+    size = dest.stat().st_size
+    floor = 100_000 if kind == "model" else 10_000
+    if size < floor:
+        try:
+            dest.unlink()
+        except OSError:
+            pass          # some mounts disallow unlink; rejecting it is enough
+        return jsonify({"error": f"that file is only {size} bytes — truncated or "
+                                 f"not a real {kind}"}), 400
+
+    return jsonify({"name": name, "mb": round(size / 1e6, 1)})
 
 
 @app.route("/api/roi/<name>", methods=["GET", "POST"])
@@ -186,7 +201,12 @@ def run_job(jid: str, cfg: dict):
     from ultralytics import YOLO
     J = JOBS[jid]
     try:
-        model = YOLO(str(MODELS / safe(cfg["model"])))
+        try:
+            model = YOLO(str(MODELS / safe(cfg["model"])))
+        except Exception as e:
+            raise RuntimeError(
+                f"could not load '{cfg['model']}' — is it a valid Ultralytics "
+                f"checkpoint? ({type(e).__name__})") from e
         names = model.names
 
         device = cfg.get("device", "auto")
