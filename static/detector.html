@@ -142,6 +142,7 @@
       view are not traffic and are excluded automatically.</p>
   </div>
   <canvas id="cv" style="display:none"></canvas>
+  <img id="live" style="display:none;max-width:100%;max-height:100%">
   <div id="banner" style="display:none"></div>
   <div id="res">
     <div style="display:flex;justify-content:space-between;align-items:baseline">
@@ -304,11 +305,16 @@ $('#runBtn').onclick=async()=>{
     body:JSON.stringify(cfg)}).then(r=>r.json());
   if(r.error)return alert(r.error);
   job=r.job;$('#res').style.display='block';$('#rErr').innerHTML='';
+  // swap the still frame for the live annotated stream
+  $('#cv').style.display='none';
+  $('#live').src='/api/job/'+job+'/stream.mjpg';
+  $('#live').style.display='block';
   $('#runBtn').style.display='none';$('#stopBtn').style.display='block';
   $('#csvBtn').disabled=$('#jsonBtn').disabled=true;
   poll=setInterval(tick,700);tick();
 };
 $('#stopBtn').onclick=()=>fetch(`/api/job/${job}/stop`,{method:'POST'});
+addEventListener('beforeunload',()=>{ if(job) navigator.sendBeacon(`/api/job/${job}/stop`); });
 $('#csvBtn').onclick=()=>location.href=`/api/job/${job}/export.csv`;
 $('#jsonBtn').onclick=()=>location.href=`/api/job/${job}/export.json`;
 
@@ -325,6 +331,10 @@ async function tick(){
   if(s.state==='error')$('#rErr').innerHTML=`<div class="err">${s.error}</div>`;
   if(s.state!=='running'){
     clearInterval(poll);
+    // stream ends with the job — drop back to the still frame so the ROI
+    // stays visible and editable
+    $('#live').removeAttribute('src'); $('#live').style.display='none';
+    if(img){$('#cv').style.display='block';draw();}
     $('#rT').textContent=s.state==='done'?'Complete':s.state==='stopped'?'Stopped':'Failed';
     $('#runBtn').style.display='block';$('#stopBtn').style.display='none';
     if(s.state!=='error')$('#csvBtn').disabled=$('#jsonBtn').disabled=false;

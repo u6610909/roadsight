@@ -72,6 +72,10 @@ PCU_GROUP = {
     "bus": "heavy", "heavy": "heavy", "special type": "heavy", "lorry": "heavy",
 }
 PCU_WEIGHT = {"car": 1.0, "moto": 0.33, "heavy": 2.0}
+
+# BGR, for the live preview
+DRAW = {"car": (255, 190, 60), "moto": (120, 220, 120), "heavy": (90, 120, 255)}
+PREVIEW_W = 900          # preview is downscaled; the model still sees full res
 GROUPS = ["car", "moto", "heavy"]
 
 app = Flask(__name__, static_folder=str(HERE / "static"))
@@ -190,6 +194,49 @@ def frame():
                     "duration": round(total / fps, 1) if fps else 0})
 
 
+def _annotate(img, rois, boxes, names, moved, totals, vid_t, fps):
+    """Draw regions, boxes and a running tally, and return a JPEG."""
+    f = img.copy()
+
+    for i, (lane, poly) in enumerate(rois.items()):
+        col = list(DRAW.values())[i % len(DRAW)]
+        ov = f.copy()
+        cv2.fillPoly(ov, [poly], tuple(c // 4 for c in col))
+        cv2.addWeighted(ov, 0.30, f, 0.70, 0, f)
+        cv2.polylines(f, [poly], True, col, 3)
+        c = poly.mean(axis=0).astype(int)
+        cv2.putText(f, lane, tuple(c), cv2.FONT_HERSHEY_SIMPLEX, 1.1, col, 3)
+
+    for box in boxes:
+        tid = int(box.id[0]) if box.id is not None else None
+        grp = PCU_GROUP.get(str(names.get(int(box.cls[0]), "car")).lower(), "car")
+        x1, y1, x2, y2 = map(int, box.xyxy[0].cpu().numpy())
+        counted = tid in moved
+        col = DRAW[grp] if counted else (150, 150, 150)
+        cv2.rectangle(f, (x1, y1), (x2, y2), col, 2)
+        tag = f"{grp} #{tid}" if counted else "waiting"
+        cv2.putText(f, tag, (x1, y1 - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.5, col, 2)
+
+    # tally panel
+    tot = {g: sum(t[g] for t in totals.values()) for g in GROUPS}
+    lines = [f"car   {tot['car']:>4}", f"moto  {tot['moto']:>4}",
+             f"heavy {tot['heavy']:>4}",
+             f"TOTAL {sum(tot.values()):>4}",
+             f"{fps:4.1f} fps   t={vid_t:.0f}s"]
+    ov = f.copy()
+    cv2.rectangle(ov, (14, 14), (300, 40 + 34 * len(lines)), (18, 18, 22), -1)
+    cv2.addWeighted(ov, 0.72, f, 0.28, 0, f)
+    for i, ln in enumerate(lines):
+        cv2.putText(f, ln, (28, 52 + 34 * i), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.75, (235, 235, 245), 2)
+
+    if f.shape[1] > PREVIEW_W:
+        k = PREVIEW_W / f.shape[1]
+        f = cv2.resize(f, None, fx=k, fy=k, interpolation=cv2.INTER_AREA)
+    ok, buf = cv2.imencode(".jpg", f, [cv2.IMWRITE_JPEG_QUALITY, 72])
+    return buf.tobytes() if ok else None
+
+
 # ─────────────────────────────────────────────────────────────── counting
 def run_job(jid: str, cfg: dict):
     """
@@ -278,6 +325,13 @@ def run_job(jid: str, cfg: dict):
                 win = {k: {g: 0 for g in GROUPS} for k in rois}
                 win_start = vid_t
 
+            # Live preview. The annotated frame is stashed as a JPEG for the
+            # MJPEG endpoint to serve. Encoding costs a few ms and is skipped
+            # entirely when nobody is watching.
+            if J.get("watchers", 0) > 0:
+                J["jpeg"] = _annotate(img, rois, res.boxes, names, moved,
+                                      totals, vid_t, J.get("fps", 0))
+
             el = time.time() - t0
             J.update(progress=min(1.0, done / J["total_frames"]),
                      video_t=round(vid_t, 1), elapsed=round(el, 1),
@@ -308,7 +362,8 @@ def start():
         return jsonify({"error": "no video selected"}), 400
     jid = uuid.uuid4().hex[:8]
     JOBS[jid] = {"state": "running", "stop": False, "progress": 0.0,
-                 "totals": {}, "windows": [], "cfg": cfg}
+                 "totals": {}, "windows": [], "cfg": cfg,
+                 "watchers": 0, "jpeg": None}
     threading.Thread(target=run_job, args=(jid, cfg), daemon=True).start()
     return jsonify({"job": jid})
 
@@ -318,7 +373,42 @@ def status(jid):
     J = JOBS.get(jid)
     if not J:
         return jsonify({"error": "no such job"}), 404
-    return jsonify({k: v for k, v in J.items() if k not in ("stop", "all_windows")})
+    return jsonify({k: v for k, v in J.items()
+                    if k not in ("stop", "all_windows", "jpeg")})
+
+
+@app.route("/api/job/<jid>/stream.mjpg")
+def stream(jid):
+    """
+    Live preview as multipart MJPEG — an <img src> shows it with no JavaScript.
+
+    A watcher count gates the drawing: with nobody looking, run_job skips
+    annotation and JPEG encoding entirely, so the preview costs nothing when
+    it is not being used.
+    """
+    J = JOBS.get(jid)
+    if not J:
+        return "no such job", 404
+
+    def gen():
+        J["watchers"] = J.get("watchers", 0) + 1
+        try:
+            last = None
+            while J["state"] == "running":
+                buf = J.get("jpeg")
+                if buf is not None and buf is not last:
+                    last = buf
+                    yield (b"--f\r\nContent-Type: image/jpeg\r\n"
+                           b"Content-Length: " + str(len(buf)).encode() +
+                           b"\r\n\r\n" + buf + b"\r\n")
+                else:
+                    time.sleep(0.03)
+        finally:
+            J["watchers"] = max(0, J.get("watchers", 1) - 1)
+
+    return Response(gen(),
+                    mimetype="multipart/x-mixed-replace; boundary=f",
+                    headers={"Cache-Control": "no-store"})
 
 
 @app.route("/api/job/<jid>/stop", methods=["POST"])
