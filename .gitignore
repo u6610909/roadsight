@@ -3,6 +3,8 @@ uploads/*
 !uploads/.gitkeep
 models/*
 !models/.gitkeep
+# the one model that ships with the repo (22.6 MB): see "The included model" in README
+!models/best_v2_1280.pt
 rois/*
 !rois/.gitkeep
 
